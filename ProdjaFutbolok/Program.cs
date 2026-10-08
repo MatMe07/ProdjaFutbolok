@@ -8,9 +8,10 @@ builder.Services.AddDbContext<ProdajaFutbolokContext>();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
-app.MapGet("/gets", (ProdajaFutbolokContext contex) =>
+app.MapGet("/getProducts", (ProdajaFutbolokContext contex) =>
 {
     return contex.Products;
 });
+
 
 app.Run();
