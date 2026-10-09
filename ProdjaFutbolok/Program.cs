@@ -47,4 +47,9 @@ app.MapPost("/newOrder", async (ProdajaFutbolokContext context, List<OrderItemPr
     return order;
 });
 
+app.MapGet("/getUserOrders/{UserId}", (ProdajaFutbolokContext context, int UserId) =>
+{
+    return context.Orders.Where(o => o.UserId == UserId);
+});
+
 app.Run();
