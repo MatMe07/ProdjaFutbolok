@@ -76,6 +76,73 @@ app.MapPost("/api/auth/login", (ProdajaFutbolokContext context, LoginRequest req
     });
 }).AllowAnonymous();
 
+app.MapGet("/api/search/", async (ProdajaFutbolokContext context, string search) =>
+{
+    if (search == null || string.IsNullOrWhiteSpace(search))
+    {
+        return Results.BadRequest(new { message = "Параметр обязателен" });
+    }
+    search = search.ToLower();
+    var res = await context.Products.Where(p=> p.Title.Contains(search)).ToListAsync();
+    return Results.Json(res);
+
+}).AllowAnonymous();
+
+app.MapGet("/api/orders_withstatus/", async (ProdajaFutbolokContext context, string stutus) =>
+{
+    if (stutus == null || string.IsNullOrWhiteSpace(stutus))
+    {
+        return Results.BadRequest(new { message = "Параметр query обязателен" });
+    }
+    var orders = await db.Orders.OrderStatus.Where(o => o.StatusName == status).ToListAsync();
+
+    return Results.Json(orders);
+
+}).RequireAuthorization();
+
+app.MapPost("/api/auth/register", async (ProdajaFutbolokContext context, RegisterRequest request) =>
+{
+
+    if (string.IsNullOrWhiteSpace(request.Login))
+        return Results.BadRequest(new { message = "Логин обязателен" });
+
+    if (string.IsNullOrWhiteSpace(request.Password))
+        return Results.BadRequest(new { message = "Пароль обязателен" });
+
+    if (string.IsNullOrWhiteSpace(request.Phone))
+        return Results.BadRequest(new { message = "Телефон обязателен" });
+
+
+    var exists = await db.Users.AnyAsync(u => u.Login == request.Login);
+    if (exists)  return Results.Conflict(new { message = "Логин уже занят" });
+
+
+    var hasher = new PasswordHasher<User>();
+
+    var user = new User
+    {
+        Login = request.Login,
+        PhoneNumber = request.Phone,               
+        DeliveryAddress = request.Address,         
+        RoleId = 2,                                
+        CreatedAt = DateTime.UtcNow
+    };
+    user.PasswordHash = hasher.HashPassword(user, request.Password);
+
+    context.Users.Add(user);
+    await context.SaveChangesAsync();
+
+    return Results.Created($"/api/users/{user.Id}", new
+    {
+        user.Id,
+        user.Login,
+        user.PhoneNumber,
+        user.DeliveryAddress,
+        user.RoleId
+    });
+}).AllowAnonymous();
+
+
 app.Run();
 
 string CreateToken(User user)
