@@ -7,6 +7,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using ProdjaFutbolok;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using System.Text.Json.Serialization;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddDbContext<ProdajaFutbolokContext>();
@@ -59,7 +60,7 @@ app.MapGet("/api/getProducts", async (ProdajaFutbolokContext contex) =>
 {
     var prods = await contex.Products.ToListAsync();
     return Results.Json(prods);
-});
+}).AllowAnonymous();
 
 app.MapPost("/api/newOrder", async (ProdajaFutbolokContext context, List<OrderItemProd> orderItemProds) =>
 {
@@ -76,12 +77,12 @@ app.MapPost("/api/newOrder", async (ProdajaFutbolokContext context, List<OrderIt
         var findProd = await context.Products.FirstOrDefaultAsync(p => p.Id == prod.ProdId);
         if (findProd == null)
         {
-            return Results.NotFound($"Ïðîäóêòà ñ id = {prod.ProdId} íåò!");
+            return Results.NotFound($"Продукта с id = {prod.ProdId} нет!");
         }
         var findSize = await context.Sizes.FirstOrDefaultAsync(p => p.Id == prod.SizeId);
         if (findSize == null)
         {
-            return Results.NotFound($"Ðàçìåðà ñ id = {prod.ProdId} íåò!");
+            return Results.NotFound($"Размера с id = {prod.ProdId} нет!");
         }
         
         var price = findProd.Price;
@@ -97,12 +98,18 @@ app.MapPost("/api/newOrder", async (ProdajaFutbolokContext context, List<OrderIt
     }
     await context.SaveChangesAsync();
     return Results.Json(order) ;
-});
+}).RequireAuthorization();
 
-app.MapGet("/api/getUserOrders/{UserId}", (ProdajaFutbolokContext context, int UserId) =>
+app.MapGet("/api/getUserOrders/{UserId}", async (ProdajaFutbolokContext context, int UserId) =>
 {
-    return context.Orders.Where(o => o.UserId == UserId);
-});
+    var user = await context.Users.FirstOrDefaultAsync(us => us.Id == UserId);
+    if (user == null)
+    {
+        return Results.NotFound("Такого пользователя нет!") ;
+
+    }
+    return Results.Json(context.Orders.Where(o => o.UserId == UserId));
+}).RequireAuthorization();
 
 
 app.MapPatch("/api/changeOrderStatus", async (ProdajaFutbolokContext context, int OrderId, int StatusId) =>
@@ -110,16 +117,16 @@ app.MapPatch("/api/changeOrderStatus", async (ProdajaFutbolokContext context, in
     var order = await context.Orders.FirstOrDefaultAsync(o=>o.Id == OrderId);
     if (order == null)
     {
-        return Results.NotFound("Òàêîãî çàêàçà íåò!") ;
+        return Results.NotFound("Такого заказа нет!") ;
     }
     if (await context.OrderStatuses.FirstOrDefaultAsync(s=>s.Id == StatusId) == null)
     {
-        return Results.NotFound("Òàêîãî ñòàòóñà íåò!") ;
+        return Results.NotFound("Такого статуса нет!") ;
     }
     order.StatusId = StatusId;
     await context.SaveChangesAsync();
     return Results.Ok(order);
-});
+}).RequireAuthorization(r => r.RequireAuthenticatedUser().RequireRole("1"));
 
 
 app.MapPatch("/api/removeProduct/{ProductId}", async (ProdajaFutbolokContext context, int ProductId) =>
@@ -127,26 +134,26 @@ app.MapPatch("/api/removeProduct/{ProductId}", async (ProdajaFutbolokContext con
     var product = await context.Products.FirstOrDefaultAsync(o=>o.Id == ProductId);
     if (product == null)
     {
-        return Results.NotFound("Òàêîãî ïðîäóêòà íåò!");
+        return Results.NotFound("Такого продукта нет!");
     }
     product.IsAvailable = false;
     await context.SaveChangesAsync();
-    return Results.Ok($"Òîâàð (#{ProductId}){product.Title} óáðàí");
+    return Results.Ok($"Товар (#{ProductId}){product.Title} убран");
 
-});
+}).RequireAuthorization(r => r.RequireAuthenticatedUser().RequireRole("1"));
 
 app.MapPatch("/api/returnProduct/{ProductId}", async (ProdajaFutbolokContext context, int ProductId) =>
 {
     var product = await context.Products.FirstOrDefaultAsync(o=>o.Id == ProductId);
     if (product == null)
     {
-        return Results.NotFound("Òàêîãî ïðîäóêòà íåò!");
+        return Results.NotFound("Такого продукта нет!");
     }
     product.IsAvailable = true;
     await context.SaveChangesAsync();
-    return Results.Ok($"Òîâàð (#{ProductId}){product.Title} âîçâðàùåí");
+    return Results.Ok($"Товар (#{ProductId}){product.Title} возвращен");
 
-});
+}).RequireAuthorization(r => r.RequireAuthenticatedUser().RequireRole("1"));
 
 app.MapPost("/api/auth/login", (ProdajaFutbolokContext context, LoginRequest request) =>
 {
@@ -174,7 +181,7 @@ app.MapGet("/api/search", async (ProdajaFutbolokContext context, string search) 
 {
     if (search == null || string.IsNullOrWhiteSpace(search))
     {
-        return Results.BadRequest(new { message = "Ïàðàìåòð îáÿçàòåëåí" });
+        return Results.BadRequest(new { message = "Параметр обязателен" });
     }
     search = search.ToLower();
     var res = await context.Products.Where(p=> p.Title.Contains(search)).ToListAsync();
@@ -186,7 +193,7 @@ app.MapGet("/api/orders_withstatus", async (ProdajaFutbolokContext context, stri
 {
     if (status == null || string.IsNullOrWhiteSpace(status))
     {
-        return Results.BadRequest(new { message = "Ïàðàìåòð îáÿçàòåëåí" });
+        return Results.BadRequest(new { message = "Параметр обязателен" });
     }
     var orders = await context.Orders.Where(o => o.Status.StatusName == status).ToListAsync();
 
@@ -198,17 +205,17 @@ app.MapPost("/api/auth/register", async (ProdajaFutbolokContext context, Registe
 {
 
     if (string.IsNullOrWhiteSpace(request.Login))
-        return Results.BadRequest(new { message = "Ëîãèí îáÿçàòåëåí" });
+        return Results.BadRequest(new { message = "Логин обязателен" });
 
     if (string.IsNullOrWhiteSpace(request.Password))
-        return Results.BadRequest(new { message = "Ïàðîëü îáÿçàòåëåí" });
+        return Results.BadRequest(new { message = "Пароль обязателен" });
 
     if (string.IsNullOrWhiteSpace(request.Phone))
-        return Results.BadRequest(new { message = "Òåëåôîí îáÿçàòåëåí" });
+        return Results.BadRequest(new { message = "Телефон обязателен" });
 
 
     var exists = await context.Users.AnyAsync(u => u.Login == request.Login);
-    if (exists)  return Results.Conflict(new { message = "Ëîãèí óæå çàíÿò" });
+    if (exists)  return Results.Conflict(new { message = "Логин уже занят" });
 
 
     var hasher = new PasswordHasher<User>();
@@ -240,13 +247,13 @@ app.MapPut("/api/inventory", async (ProdajaFutbolokContext context, InvetoryRequ
 {
     if(request.quantity < 0)
     {
-        return Results.BadRequest(new { message = "Îòðèöàòåëüíîå êîëè÷åñòâî" });
+        return Results.BadRequest(new { message = "Отрицательное количество" });
     }
 
     var inventory = await context.ProductInventories.FirstOrDefaultAsync(p => p.ProductId == request.prodID && p.SizeId == request.sizeID);
 
     if (inventory == null) {
-        return Results.NotFound(new { message = "Íå íàéäåíî" });
+        return Results.NotFound(new { message = "Не найдено" });
 
     }
 
