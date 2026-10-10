@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using ProdjaFutbolok.Models;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using ProdjaFutbolok;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddDbContext<ProdajaFutbolokContext>();
@@ -76,7 +78,7 @@ app.MapPost("/api/auth/login", (ProdajaFutbolokContext context, LoginRequest req
     });
 }).AllowAnonymous();
 
-app.MapGet("/api/search/", async (ProdajaFutbolokContext context, string search) =>
+app.MapGet("/api/search", async (ProdajaFutbolokContext context, string search) =>
 {
     if (search == null || string.IsNullOrWhiteSpace(search))
     {
@@ -88,13 +90,13 @@ app.MapGet("/api/search/", async (ProdajaFutbolokContext context, string search)
 
 }).AllowAnonymous();
 
-app.MapGet("/api/orders_withstatus/", async (ProdajaFutbolokContext context, string stutus) =>
+app.MapGet("/api/orders_withstatus", async (ProdajaFutbolokContext context, string status) =>
 {
-    if (stutus == null || string.IsNullOrWhiteSpace(stutus))
+    if (status == null || string.IsNullOrWhiteSpace(status))
     {
-        return Results.BadRequest(new { message = "Параметр query обязателен" });
+        return Results.BadRequest(new { message = "Параметр обязателен" });
     }
-    var orders = await db.Orders.OrderStatus.Where(o => o.StatusName == status).ToListAsync();
+    var orders = await context.Orders.Where(o => o.Status.StatusName == status).ToListAsync();
 
     return Results.Json(orders);
 
@@ -113,7 +115,7 @@ app.MapPost("/api/auth/register", async (ProdajaFutbolokContext context, Registe
         return Results.BadRequest(new { message = "Телефон обязателен" });
 
 
-    var exists = await db.Users.AnyAsync(u => u.Login == request.Login);
+    var exists = await context.Users.AnyAsync(u => u.Login == request.Login);
     if (exists)  return Results.Conflict(new { message = "Логин уже занят" });
 
 
@@ -142,6 +144,27 @@ app.MapPost("/api/auth/register", async (ProdajaFutbolokContext context, Registe
     });
 }).AllowAnonymous();
 
+app.MapPut("/api/inventory", async (ProdajaFutbolokContext context, InvetoryRequest request) =>
+{
+    if(request.quantity < 0)
+    {
+        return Results.BadRequest(new { message = "Отрицательное количество" });
+    }
+
+    var inventory = await context.ProductInventories.FirstOrDefaultAsync(p => p.ProductId == request.prodID && p.SizeId == request.sizeID);
+
+    if (inventory == null) {
+        return Results.NotFound(new { message = "Не найдено" });
+
+    }
+
+    inventory.StockQuantity = request.quantity;
+    await context.SaveChangesAsync();
+
+    return Results.Json(inventory);
+
+}).RequireAuthorization(r => r.RequireAuthenticatedUser().RequireRole("1"));
+
 
 app.Run();
 
@@ -151,7 +174,7 @@ string CreateToken(User user)
     {
         new Claim("sub", user.Id.ToString()),
         new Claim("name", user.Login),
-        new Claim("role", user.Role.RoleName)
+        new Claim("role", user.RoleId.ToString())
     };
 
     var token = new JwtSecurityToken(
