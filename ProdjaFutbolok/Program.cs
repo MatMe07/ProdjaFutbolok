@@ -11,6 +11,10 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddDbContext<ProdajaFutbolokContext>();
 // Add services to the container.
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
+});
 
 var hasher = new PasswordHasher<User>();
 
@@ -51,9 +55,97 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 // Configure the HTTP request pipeline.
-app.MapGet("/gets", (ProdajaFutbolokContext contex) =>
+app.MapGet("/api/getProducts", async (ProdajaFutbolokContext contex) =>
 {
-    return contex.Products;
+    var prods = await contex.Products.ToListAsync();
+    return Results.Json(prods);
+});
+
+app.MapPost("/api/newOrder", async (ProdajaFutbolokContext context, List<OrderItemProd> orderItemProds) =>
+{
+    var order = new Order
+    {
+        UserId = 2,
+        StatusId=1,
+        CreatedAt=DateTime.Now
+    };
+    context.Orders.Add(order);
+    await context.SaveChangesAsync();
+    foreach(var prod in orderItemProds)
+    {
+        var findProd = await context.Products.FirstOrDefaultAsync(p => p.Id == prod.ProdId);
+        if (findProd == null)
+        {
+            return Results.NotFound($"ГЏГ°Г®Г¤ГіГЄГІГ  Г± id = {prod.ProdId} Г­ГҐГІ!");
+        }
+        var findSize = await context.Sizes.FirstOrDefaultAsync(p => p.Id == prod.SizeId);
+        if (findSize == null)
+        {
+            return Results.NotFound($"ГђГ Г§Г¬ГҐГ°Г  Г± id = {prod.ProdId} Г­ГҐГІ!");
+        }
+        
+        var price = findProd.Price;
+        var new_ordProd = new OrderItem
+        {
+            OrderId = order.Id,
+            ProductId = prod.ProdId,
+            SizeId = prod.SizeId,
+            Quantity = prod.Quantity,
+            PriceAtPurchase = price,
+        };
+        context.OrderItems.Add(new_ordProd); 
+    }
+    await context.SaveChangesAsync();
+    return Results.Json(order) ;
+});
+
+app.MapGet("/api/getUserOrders/{UserId}", (ProdajaFutbolokContext context, int UserId) =>
+{
+    return context.Orders.Where(o => o.UserId == UserId);
+});
+
+
+app.MapPatch("/api/changeOrderStatus", async (ProdajaFutbolokContext context, int OrderId, int StatusId) =>
+{
+    var order = await context.Orders.FirstOrDefaultAsync(o=>o.Id == OrderId);
+    if (order == null)
+    {
+        return Results.NotFound("Г’Г ГЄГ®ГЈГ® Г§Г ГЄГ Г§Г  Г­ГҐГІ!") ;
+    }
+    if (await context.OrderStatuses.FirstOrDefaultAsync(s=>s.Id == StatusId) == null)
+    {
+        return Results.NotFound("Г’Г ГЄГ®ГЈГ® Г±ГІГ ГІГіГ±Г  Г­ГҐГІ!") ;
+    }
+    order.StatusId = StatusId;
+    await context.SaveChangesAsync();
+    return Results.Ok(order);
+});
+
+
+app.MapPatch("/api/removeProduct/{ProductId}", async (ProdajaFutbolokContext context, int ProductId) =>
+{
+    var product = await context.Products.FirstOrDefaultAsync(o=>o.Id == ProductId);
+    if (product == null)
+    {
+        return Results.NotFound("Г’Г ГЄГ®ГЈГ® ГЇГ°Г®Г¤ГіГЄГІГ  Г­ГҐГІ!");
+    }
+    product.IsAvailable = false;
+    await context.SaveChangesAsync();
+    return Results.Ok($"Г’Г®ГўГ Г° (#{ProductId}){product.Title} ГіГЎГ°Г Г­");
+
+});
+
+app.MapPatch("/api/returnProduct/{ProductId}", async (ProdajaFutbolokContext context, int ProductId) =>
+{
+    var product = await context.Products.FirstOrDefaultAsync(o=>o.Id == ProductId);
+    if (product == null)
+    {
+        return Results.NotFound("Г’Г ГЄГ®ГЈГ® ГЇГ°Г®Г¤ГіГЄГІГ  Г­ГҐГІ!");
+    }
+    product.IsAvailable = true;
+    await context.SaveChangesAsync();
+    return Results.Ok($"Г’Г®ГўГ Г° (#{ProductId}){product.Title} ГўГ®Г§ГўГ°Г Г№ГҐГ­");
+
 });
 
 app.MapPost("/api/auth/login", (ProdajaFutbolokContext context, LoginRequest request) =>
@@ -82,7 +174,7 @@ app.MapGet("/api/search", async (ProdajaFutbolokContext context, string search) 
 {
     if (search == null || string.IsNullOrWhiteSpace(search))
     {
-        return Results.BadRequest(new { message = "Параметр обязателен" });
+        return Results.BadRequest(new { message = "ГЏГ Г°Г Г¬ГҐГІГ° Г®ГЎГїГ§Г ГІГҐГ«ГҐГ­" });
     }
     search = search.ToLower();
     var res = await context.Products.Where(p=> p.Title.Contains(search)).ToListAsync();
@@ -94,7 +186,7 @@ app.MapGet("/api/orders_withstatus", async (ProdajaFutbolokContext context, stri
 {
     if (status == null || string.IsNullOrWhiteSpace(status))
     {
-        return Results.BadRequest(new { message = "Параметр обязателен" });
+        return Results.BadRequest(new { message = "ГЏГ Г°Г Г¬ГҐГІГ° Г®ГЎГїГ§Г ГІГҐГ«ГҐГ­" });
     }
     var orders = await context.Orders.Where(o => o.Status.StatusName == status).ToListAsync();
 
@@ -106,17 +198,17 @@ app.MapPost("/api/auth/register", async (ProdajaFutbolokContext context, Registe
 {
 
     if (string.IsNullOrWhiteSpace(request.Login))
-        return Results.BadRequest(new { message = "Логин обязателен" });
+        return Results.BadRequest(new { message = "Г‹Г®ГЈГЁГ­ Г®ГЎГїГ§Г ГІГҐГ«ГҐГ­" });
 
     if (string.IsNullOrWhiteSpace(request.Password))
-        return Results.BadRequest(new { message = "Пароль обязателен" });
+        return Results.BadRequest(new { message = "ГЏГ Г°Г®Г«Гј Г®ГЎГїГ§Г ГІГҐГ«ГҐГ­" });
 
     if (string.IsNullOrWhiteSpace(request.Phone))
-        return Results.BadRequest(new { message = "Телефон обязателен" });
+        return Results.BadRequest(new { message = "Г’ГҐГ«ГҐГґГ®Г­ Г®ГЎГїГ§Г ГІГҐГ«ГҐГ­" });
 
 
     var exists = await context.Users.AnyAsync(u => u.Login == request.Login);
-    if (exists)  return Results.Conflict(new { message = "Логин уже занят" });
+    if (exists)  return Results.Conflict(new { message = "Г‹Г®ГЈГЁГ­ ГіГ¦ГҐ Г§Г Г­ГїГІ" });
 
 
     var hasher = new PasswordHasher<User>();
@@ -148,13 +240,13 @@ app.MapPut("/api/inventory", async (ProdajaFutbolokContext context, InvetoryRequ
 {
     if(request.quantity < 0)
     {
-        return Results.BadRequest(new { message = "Отрицательное количество" });
+        return Results.BadRequest(new { message = "ГЋГІГ°ГЁГ¶Г ГІГҐГ«ГјГ­Г®ГҐ ГЄГ®Г«ГЁГ·ГҐГ±ГІГўГ®" });
     }
 
     var inventory = await context.ProductInventories.FirstOrDefaultAsync(p => p.ProductId == request.prodID && p.SizeId == request.sizeID);
 
     if (inventory == null) {
-        return Results.NotFound(new { message = "Не найдено" });
+        return Results.NotFound(new { message = "ГЌГҐ Г­Г Г©Г¤ГҐГ­Г®" });
 
     }
 
